@@ -1,0 +1,64 @@
+name: Daily Planner Reminder
+
+on:
+  schedule:
+    # 17:00 UTC = 20:00 по Москве (МСК = UTC+3 круглый год)
+    - cron: '0 17 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send reminder and delete the previous one
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, urllib.request, urllib.parse
+
+          token = os.environ['BOT_TOKEN']
+          chat_id = os.environ['CHAT_ID']
+          base = f"https://api.telegram.org/bot{token}"
+          state_file = ".github/last_message_id.txt"
+
+          def call(method, **params):
+              data = urllib.parse.urlencode(params).encode()
+              req = urllib.request.Request(f"{base}/{method}", data=data)
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          old_id = None
+          if os.path.exists(state_file):
+              with open(state_file) as f:
+                  content = f.read().strip()
+                  if content:
+                      old_id = content
+
+          if old_id:
+              try:
+                  call('deleteMessage', chat_id=chat_id, message_id=old_id)
+              except Exception as e:
+                  print('Не удалось удалить прошлое сообщение (возможно, уже удалено):', e)
+
+          result = call('sendMessage', chat_id=chat_id, text='Загляни в планер 🌿')
+          new_id = result['result']['message_id']
+
+          os.makedirs(os.path.dirname(state_file), exist_ok=True)
+          with open(state_file, 'w') as f:
+              f.write(str(new_id))
+          EOF
+
+      - name: Save the new message id
+        run: |
+          git config user.name "planner-bot"
+          git config user.email "actions@github.com"
+          git add .github/last_message_id.txt
+          git diff --staged --quiet || git commit -m "update last reminder message id"
+          git push
