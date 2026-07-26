@@ -113,6 +113,16 @@
   .del{opacity:0;color:var(--faint);font-size:18px;line-height:1;padding:2px 6px;transition:.15s}
   .row:hover .del{opacity:1}
   .del:hover{color:#C1554A}
+  .edit-ic{opacity:0;color:var(--faint);font-size:14px;padding:2px 6px;transition:.15s;flex:0 0 auto}
+  .row:hover .edit-ic{opacity:1}
+  .edit-ic:hover{color:var(--ac-text)}
+  .task-note{font-size:12.5px;color:var(--muted);font-style:italic;margin-top:5px;line-height:1.4}
+  .edit-row{display:block;padding:12px 0}
+  .edit-form{display:flex;flex-direction:column;gap:8px;background:var(--surface-2);border-radius:var(--radius-sm);padding:14px}
+  .edit-form input.text,.edit-form textarea{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-xs);padding:9px 12px}
+  .edit-form textarea{min-height:44px;resize:vertical}
+  .edit-actions{display:flex;gap:8px;margin-top:2px}
+  .edit-actions .qbtn{padding:9px 16px}
 
   /* ---------- add task form ---------- */
   .add-toggle{display:flex;align-items:center;gap:8px;color:var(--ac-text);font-weight:700;font-size:14px;
@@ -415,17 +425,68 @@
     return '<span class="chip '+v[0]+'">'+v[1]+'</span>';
   }
 
+  var editingId=null;
+
   function taskRowHTML(x){
+    if(x.id===editingId) return editRowHTML(x);
     var chips='';
     if(x.date) chips+='<span class="chip deadline">до '+fmtLong(x.date)+'</span>';
     if(x.category) chips+='<span class="chip">'+esc(x.category)+'</span>';
+    if(x.address) chips+='<span class="chip">📍 '+esc(x.address)+'</span>';
     chips+=priorityChip(x.priority);
     chips+=statusChip(x.status);
     return '<div class="row '+(x.status==="done"?"done":"")+'">'+
       '<button class="check '+(x.status==="done"?"on":"")+'" data-toggle="'+x.id+'"></button>'+
       '<div class="body"><div class="txt">'+(x.time?'<span class="chip">'+esc(x.time)+'</span> ':'')+esc(x.text)+'</div>'+
-      '<div class="meta-chips">'+chips+'</div></div>'+
+      '<div class="meta-chips">'+chips+'</div>'+
+      (x.note?'<div class="task-note">'+esc(x.note)+'</div>':'')+
+      '</div>'+
+      '<button class="edit-ic" data-edit="'+x.id+'" title="редактировать">✎</button>'+
       '<button class="del" data-del="'+x.id+'">×</button></div>';
+  }
+
+  function selOpt(value,current,label){ return '<option value="'+value+'"'+(value===current?" selected":"")+'>'+label+'</option>'; }
+  function categorySelectHTML(idp,current){
+    var html='<select id="'+idp+'">';
+    state.categories.forEach(function(c){ html+='<option value="'+esc(c)+'"'+(c===current?" selected":"")+'>'+esc(c)+'</option>'; });
+    html+='<option value="__new">+ добавить категорию</option></select>';
+    return html;
+  }
+
+  function editRowHTML(x){
+    var idp="edit_"+x.id;
+    return '<div class="row edit-row"><div class="edit-form">'+
+      '<input class="text" id="'+idp+'Text" value="'+esc(x.text)+'" placeholder="что нужно сделать?">'+
+      '<div class="add-grid">'+
+        '<input type="date" id="'+idp+'Date" value="'+(x.date||"")+'">'+
+        '<input type="time" id="'+idp+'Time" value="'+(x.time||"")+'">'+
+        categorySelectHTML(idp+"Cat", x.category||"")+
+        '<select id="'+idp+'Priority">'+selOpt("low",x.priority,"приоритет: низкий")+selOpt("medium",x.priority,"приоритет: средний")+selOpt("high",x.priority,"приоритет: высокий")+'</select>'+
+        '<select id="'+idp+'Status">'+selOpt("todo",x.status,"к выполнению")+selOpt("progress",x.status,"в процессе")+selOpt("done",x.status,"готово")+'</select>'+
+        '<div class="newcat-row" id="'+idp+'NewcatRow"><input id="'+idp+'NewcatInput" placeholder="название категории"><button id="'+idp+'NewcatBtn">Добавить</button></div>'+
+      '</div>'+
+      '<input class="text" id="'+idp+'Address" value="'+esc(x.address||"")+'" placeholder="адрес (необязательно)">'+
+      '<textarea id="'+idp+'Note" placeholder="заметка (необязательно)">'+esc(x.note||"")+'</textarea>'+
+      '<div class="edit-actions"><button class="add-btn" data-save-edit="'+x.id+'">Сохранить</button>'+
+      '<button class="qbtn" data-cancel-edit="'+x.id+'">Отмена</button></div>'+
+    '</div></div>';
+  }
+
+  function wireEditForm(x){
+    var idp="edit_"+x.id;
+    var catSel=document.getElementById(idp+"Cat"), newRow=document.getElementById(idp+"NewcatRow");
+    if(!catSel) return;
+    catSel.addEventListener("change",function(){
+      if(catSel.value==="__new"){ newRow.classList.add("open"); document.getElementById(idp+"NewcatInput").focus(); }
+      else { newRow.classList.remove("open"); }
+    });
+    document.getElementById(idp+"NewcatBtn").addEventListener("click",function(){
+      var v=document.getElementById(idp+"NewcatInput").value.trim(); if(!v) return;
+      if(state.categories.indexOf(v)===-1) state.categories.push(v);
+      save();
+      catSel.innerHTML=state.categories.map(function(c){return '<option value="'+esc(c)+'"'+(c===v?" selected":"")+'>'+esc(c)+'</option>';}).join("")+'<option value="__new">+ добавить категорию</option>';
+      newRow.classList.remove("open");
+    });
   }
 
   function addFormHTML(prefillDate, idp){
@@ -435,11 +496,14 @@
         '<input class="text" id="'+idp+'Text" placeholder="что нужно сделать?">'+
         '<div class="add-grid">'+
           '<input type="date" id="'+idp+'Date" value="'+(prefillDate||"")+'">'+
+          '<input type="time" id="'+idp+'Time" placeholder="время (необязательно)">'+
           '<select id="'+idp+'Cat">'+categoryOptionsHTML()+'<option value="__new">+ добавить категорию</option></select>'+
           '<select id="'+idp+'Priority"><option value="low">приоритет: низкий</option><option value="medium" selected>приоритет: средний</option><option value="high">приоритет: высокий</option></select>'+
           '<select id="'+idp+'Status"><option value="todo" selected>к выполнению</option><option value="progress">в процессе</option><option value="done">готово</option></select>'+
           '<div class="newcat-row" id="'+idp+'NewcatRow"><input id="'+idp+'NewcatInput" placeholder="название категории"><button id="'+idp+'NewcatBtn">Добавить</button></div>'+
         '</div>'+
+        '<input class="text" id="'+idp+'Address" placeholder="адрес (необязательно)">'+
+        '<textarea id="'+idp+'Note" placeholder="заметка (необязательно)"></textarea>'+
         '<button class="add-btn" id="'+idp+'Btn">Добавить</button>'+
       '</div>';
   }
@@ -471,10 +535,12 @@
       state.tasks.push({
         id:uid(), text:v,
         date:document.getElementById(idp+"Date").value||defaultDate||today(),
+        time:document.getElementById(idp+"Time").value||"",
+        address:document.getElementById(idp+"Address").value.trim(),
+        note:document.getElementById(idp+"Note").value.trim(),
         category:cat,
         priority:document.getElementById(idp+"Priority").value,
-        status:document.getElementById(idp+"Status").value,
-        time:""
+        status:document.getElementById(idp+"Status").value
       });
       save(); render();
     });
@@ -493,6 +559,36 @@
         save(); render();
       });
     });
+    app.querySelectorAll("[data-edit]").forEach(function(b){
+      b.addEventListener("click",function(){ editingId=b.getAttribute("data-edit"); render(); });
+    });
+    app.querySelectorAll("[data-cancel-edit]").forEach(function(b){
+      b.addEventListener("click",function(){ editingId=null; render(); });
+    });
+    app.querySelectorAll("[data-save-edit]").forEach(function(b){
+      b.addEventListener("click",function(){
+        var id=b.getAttribute("data-save-edit");
+        var x=state.tasks.find(function(t){return t.id===id;});
+        var idp="edit_"+id;
+        if(x){
+          var catSel=document.getElementById(idp+"Cat");
+          var cat = catSel.value==="__new" ? (x.category||"") : catSel.value;
+          x.text=document.getElementById(idp+"Text").value.trim()||x.text;
+          x.date=document.getElementById(idp+"Date").value||x.date;
+          x.time=document.getElementById(idp+"Time").value||"";
+          x.address=document.getElementById(idp+"Address").value.trim();
+          x.note=document.getElementById(idp+"Note").value.trim();
+          x.category=cat;
+          x.priority=document.getElementById(idp+"Priority").value;
+          x.status=document.getElementById(idp+"Status").value;
+        }
+        editingId=null; save(); render();
+      });
+    });
+    if(editingId){
+      var editedTask=state.tasks.find(function(t){return t.id===editingId;});
+      if(editedTask) wireEditForm(editedTask); else editingId=null;
+    }
   }
 
   var mainSort="date";
@@ -505,15 +601,20 @@
   }
 
   var doneOpen=false;
+  var showAllTasks=false;
 
   /* ================= MAIN (today + calendar + hub tiles) ================= */
   function renderMain(){
     var t=today();
-    var active=sortTasks(state.tasks.filter(function(x){ return x.date===t && x.status!=="done"; }), mainSort);
+    var scopeTasks = showAllTasks
+      ? state.tasks.filter(function(x){ return x.status!=="done"; })
+      : state.tasks.filter(function(x){ return x.date===t && x.status!=="done"; });
+    var active=sortTasks(scopeTasks, mainSort);
     var doneToday=state.tasks.filter(function(x){ return x.date===t && x.status==="done"; });
 
-    var html='<div class="card"><div class="card-title"><h2>Активные задачи</h2>'+
+    var html='<div class="card"><div class="card-title"><h2>'+(showAllTasks?"Все задачи":"Задачи на сегодня")+'</h2>'+
       '<span class="count">'+active.length+'</span></div>';
+    html+='<button class="add-toggle" id="scopeToggle" style="margin-bottom:8px">'+(showAllTasks?"Показать только сегодня":"Показать все задачи")+'</button>';
     html+='<div class="seg small" id="sortSeg">'+
       '<button data-s="date" class="'+(mainSort==="date"?"on":"")+'">По дате</button>'+
       '<button data-s="category" class="'+(mainSort==="category"?"on":"")+'">По категории</button>'+
@@ -545,8 +646,9 @@
       var b=e.target.closest("button"); if(!b) return; mainSort=b.getAttribute("data-s"); render();
     });
     document.getElementById("doneToggle").addEventListener("click",function(){ doneOpen=!doneOpen; render(); });
+    document.getElementById("scopeToggle").addEventListener("click",function(){ showAllTasks=!showAllTasks; render(); });
     app.querySelectorAll("[data-go]").forEach(function(b){
-      b.addEventListener("click",function(){ view=b.getAttribute("data-go"); render(); });
+      b.addEventListener("click",function(){ editingId=null; view=b.getAttribute("data-go"); render(); });
     });
   }
 
@@ -596,7 +698,7 @@
     if(selDate) wireAddForm(selDate,"day");
   }
   function backBtnHTML(){ return '<div class="back" id="backBtn">← на главную</div>'; }
-  function wireBack(){ document.getElementById("backBtn").addEventListener("click",function(){ view="main"; render(); }); }
+  function wireBack(){ document.getElementById("backBtn").addEventListener("click",function(){ editingId=null; view="main"; render(); }); }
 
   /* ================= ARCHIVE (completed tasks storage) ================= */
   function renderArchive(){
