@@ -1,6 +1,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Планер</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -281,11 +282,32 @@
 
   /* ---------- storage ---------- */
   var mem={};
+  var TG = window.Telegram && window.Telegram.WebApp;
+  var CS = TG && TG.CloudStorage;
   var store={
-    async get(k){ if(window.storage&&window.storage.get){ try{var r=await window.storage.get(k); return r?r.value:null;}catch(e){return null;} } return (k in mem)?mem[k]:null; },
-    async set(k,v){ if(window.storage&&window.storage.set){ try{await window.storage.set(k,v); return;}catch(e){} } mem[k]=v; }
+    async get(k){
+      if(CS){
+        return new Promise(function(resolve){
+          try{ CS.getItem(k, function(err, value){ resolve(err ? null : (value || null)); }); }
+          catch(e){ resolve(null); }
+        });
+      }
+      if(window.storage && window.storage.get){ try{var r=await window.storage.get(k); return r?r.value:null;}catch(e){return null;} }
+      return (k in mem) ? mem[k] : null;
+    },
+    async set(k,v){
+      if(CS){
+        return new Promise(function(resolve){
+          try{ CS.setItem(k, v, function(err, ok){ resolve(!!ok); }); }
+          catch(e){ resolve(false); }
+        });
+      }
+      if(window.storage && window.storage.set){ try{await window.storage.set(k,v); return;}catch(e){} }
+      mem[k]=v;
+    }
   };
-  var KEY="planner:data:v2";
+  // state is split across keys because Telegram CloudStorage limits each value to 4096 characters
+  var KEYS={ tasks:"planner_tasks", habits:"planner_habits", notes:"planner_notes", meta:"planner_meta" };
 
   var state={ tasks:[], habits:[], notes:[], theme:"light", accent:"green", lastMotivShown:"",
     categories:["Личное","Работа","Обучение"] };
@@ -295,7 +317,17 @@
   var noteFilter="note";
 
   var saveTimer=null;
-  function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(function(){ store.set(KEY, JSON.stringify(state)); },250); }
+  function save(){
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(function(){
+      store.set(KEYS.tasks, JSON.stringify(state.tasks));
+      store.set(KEYS.habits, JSON.stringify(state.habits));
+      store.set(KEYS.notes, JSON.stringify(state.notes));
+      store.set(KEYS.meta, JSON.stringify({
+        theme:state.theme, accent:state.accent, lastMotivShown:state.lastMotivShown, categories:state.categories
+      }));
+    },250);
+  }
   function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
   var esc=function(s){ return (s||"").replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); };
 
@@ -866,13 +898,22 @@
 
   /* ---------- boot ---------- */
   (async function(){
+    if(TG){ try{ TG.ready(); TG.expand(); }catch(e){} }
     renderHeader();
-    var raw=await store.get(KEY);
-    if(raw){ try{ var d=JSON.parse(raw);
-      state.tasks=d.tasks||[]; state.habits=d.habits||[]; state.notes=d.notes||[];
-      state.theme=d.theme||"light"; state.accent=d.accent||"green"; state.lastMotivShown=d.lastMotivShown||"";
-      state.categories=d.categories&&d.categories.length?d.categories:state.categories;
-    }catch(e){} }
+    try{
+      var rTasks=await store.get(KEYS.tasks);
+      var rHabits=await store.get(KEYS.habits);
+      var rNotes=await store.get(KEYS.notes);
+      var rMeta=await store.get(KEYS.meta);
+      if(rTasks) state.tasks=JSON.parse(rTasks)||[];
+      if(rHabits) state.habits=JSON.parse(rHabits)||[];
+      if(rNotes) state.notes=JSON.parse(rNotes)||[];
+      if(rMeta){
+        var meta=JSON.parse(rMeta);
+        state.theme=meta.theme||"light"; state.accent=meta.accent||"green"; state.lastMotivShown=meta.lastMotivShown||"";
+        state.categories=meta.categories&&meta.categories.length?meta.categories:state.categories;
+      }
+    }catch(e){}
     applyTheme();
     render();
     maybeShowMotivation();
